@@ -1,100 +1,197 @@
+require('dotenv').config(); // Carrega as variáveis de ambiente a partir do arquivo .env
 const { Telegraf } = require('telegraf');
 const { initializeApp } = require('firebase/app');
-const { getStorage, ref, uploadBytes, getDownloadURL } = require('firebase/storage');
-const fs = require('fs');
-const path = require('path');
+const { getFirestore, collection, addDoc, query, where, getDocs } = require('firebase/firestore');
 
-// Configuração do Firebase
+// Configuração do Firebase usando variáveis de ambiente
 const firebaseConfig = {
-  apiKey: "AIzaSyBNmKDC--6hxxXTQAPZOz377MpJsiXPgvQ",
-  authDomain: "streambox-7713e.firebaseapp.com",
-  projectId: "streambox-7713e",
-  storageBucket: "streambox-7713e.firebasestorage.app",
-  messagingSenderId: "543604813497",
-  appId: "1:543604813497:android:508d8fd795cb3f2fa3f568"
+  apiKey: process.env.FIREBASE_API_KEY,
+  authDomain: process.env.FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.FIREBASE_PROJECT_ID,
+  storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.FIREBASE_APP_ID
 };
 const firebaseApp = initializeApp(firebaseConfig);
-const storage = getStorage(firebaseApp);
+const db = getFirestore(firebaseApp);
 
-// Inicializa o bot
-const bot = new Telegraf('7930140423:AAHb-c0sThvAP-fUZN8bRmiFj2Dj4yLi4ks');
-const dataFile = path.join(__dirname, 'data.json');
+// Inicializa o bot com a chave da API do Telegram (também usando variável de ambiente)
+const bot = new Telegraf(process.env.TELEGRAM_API_KEY);
 
-// Função para carregar publicações
-const loadData = () => {
-  if (!fs.existsSync(dataFile)) return [];
-  return JSON.parse(fs.readFileSync(dataFile));
+// Lista de palavras proibidas
+const bannedWords = ["banca pix", "golpe", "chama pv", "eu vendo", "https://7bslot.com/", "palavrão", "banca de 20", "viado"]; // Adicione mais palavras aqui
+
+// Função para verificar se a mensagem contém palavras proibidas
+function checkForBannedWords(message) {
+  return bannedWords.some(word => message.toLowerCase().includes(word));
+}
+
+// Função para salvar dados no Firestore
+const saveData = async (data) => {
+  try {
+    const docRef = await addDoc(collection(db, "posts"), data);
+    console.log("Documento escrito com ID: ", docRef.id);
+  } catch (e) {
+    console.error("Erro ao adicionar documento: ", e.message);
+  }
 };
 
-// Função para salvar publicações
-const saveData = (data) => {
-  fs.writeFileSync(dataFile, JSON.stringify(data, null, 2));
+// Função para verificar se a categoria já existe
+const checkCategoryExists = async (category) => {
+  const q = query(collection(db, "posts"), where("category", "==", category));
+  const querySnapshot = await getDocs(q);
+  return !querySnapshot.empty; // Retorna true se a categoria já existe
 };
 
-bot.start((ctx) => ctx.reply('Bem-vindo! Envie uma imagem, texto, GIF ou escolha uma categoria para sua publicação.'));
+// Função para extrair links de texto
+const extractLinks = (text) => {
+  const urlRegex = /(https?:\/\/[^\s]+)/g;
+  return text.match(urlRegex);
+};
 
-bot.on('photo', async (ctx) => {
-  const fileId = ctx.message.photo.pop().file_id;
-  const fileUrl = await ctx.telegram.getFileLink(fileId);
-  const filePath = path.join(__dirname, 'temp.jpg');
+// Função para salvar dados da publicação (texto, imagem, vídeo, GIF)
+const savePostData = async (category, text, userId, username, platform, fileType, fileLink = '') => {
+  const links = extractLinks(text);  // Extrai links do texto
 
-  // Baixa a imagem temporariamente
-  const response = await fetch(fileUrl);
-  const buffer = await response.arrayBuffer();
-  fs.writeFileSync(filePath, Buffer.from(buffer));
-
-  // Faz upload para o Firebase Storage
-  const fileRef = ref(storage, `uploads/${fileId}.jpg`);
-  const fileBuffer = fs.readFileSync(filePath);
-  await uploadBytes(fileRef, fileBuffer);
-  const downloadURL = await getDownloadURL(fileRef);
-
-  // Salva no JSON
-  let posts = loadData();
-  posts.push({ id: fileId, type: 'image', url: downloadURL });
-  saveData(posts);
-
-  fs.unlinkSync(filePath);
-  ctx.reply(`Imagem salva! Link: ${downloadURL}`);
-});
-
-bot.on('text', (ctx) => {
-  let posts = loadData();
-  posts.push({ id: Date.now(), type: 'text', content: ctx.message.text });
-  saveData(posts);
-  ctx.reply('Texto salvo!');
-});
-
-bot.on('animation', async (ctx) => {
-  const fileId = ctx.message.animation.file_id;
-  const fileUrl = await ctx.telegram.getFileLink(fileId);
+  // Verifica se a categoria já existe
+  const categoryExists = await checkCategoryExists(category);
   
-  let posts = loadData();
-  posts.push({ id: fileId, type: 'gif', url: fileUrl });
-  saveData(posts);
-  ctx.reply('GIF salvo!');
-});
+  // Se a categoria não existir, salva a publicação
+  if (!categoryExists) {
+    const postData = {
+      category: category || 'sem categoria', // Garante que category tenha um valor se não fornecido
+      text,  // Salva o texto, incluindo emojis e formatação
+      userId,
+      username: `@${username}`, // Salva o nome do usuário no formato @nome
+      platform, // Salva o nome da plataforma
+      fileType,  // Tipo de arquivo (imagem, vídeo, GIF, texto)
+      fileLink: links && links.length > 0 ? links : (fileType !== 'text' ? fileLink : null),  // Salva links extraídos ou o fileLink
+      timestamp: new Date()
+    };
 
-bot.command('categorias', (ctx) => {
-  ctx.reply('Escolha uma categoria:', {
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: 'Casa de Apostas', callback_data: 'categoria_Casa_de_Apostas' }],
-        [{ text: 'Aplicativo', callback_data: 'categoria_Aplicativo' }],
-        [{ text: 'App', callback_data: 'categoria_App' }],
-        [{ text: 'Renda Extra', callback_data: 'categoria_Renda_Extra' }]
-      ]
+    await saveData(postData);
+  } else {
+    console.log(`A categoria '${category}' já existe. Publicação não salva.`);
+  }
+};
+
+// Função para tratar a moderação
+// Função para tratar a moderação
+async function moderateMessage(ctx, text) {
+  const userId = ctx.from.id;
+  const username = ctx.from.username || ctx.from.first_name;
+
+  // Verifica se a mensagem contém palavras proibidas
+  if (checkForBannedWords(text)) {
+    try {
+      // Apaga a mensagem
+      await ctx.deleteMessage();
+      
+      // Envia uma resposta informando que o usuário foi identificado
+      const response = `
+        Olá ${username} (ID: ${userId}),
+        Você foi identificado enviando uma mensagem com conteúdo impróprio. 
+        Seu objetivo pode ser uma tentativa de golpe. 
+        Saiba que você foi registrado na operação Fênix e está em nossa lista negra. 
+        Por favor, não tente mais violar as regras.`;
+      
+      await ctx.reply(response);
+    } catch (error) {
+      console.error("Erro ao apagar a mensagem: ", error.message);
     }
-  });
+  }
+}
+
+
+// Comando de boas-vindas
+bot.start((ctx) => {
+  const username = ctx.from.username || ctx.from.first_name;
+  const platform = 'Telegram'; // Defina aqui a plataforma como Telegram (ou altere conforme necessário)
+  savePostData('Boas-vindas', 'Bem-vindo!', ctx.from.id, username, platform, 'text');
+  ctx.reply(`Bem-vindo, @${username}! 👋\nEnvie uma imagem, vídeo, texto, GIF ou escolha uma categoria para sua publicação.`);
 });
 
-bot.on('callback_query', (ctx) => {
-  const category = ctx.callbackQuery.data.split('_')[1];
-  let posts = loadData();
-  posts.push({ id: Date.now(), type: 'category', category });
-  saveData(posts);
-  ctx.answerCbQuery(`Categoria escolhida: ${category}`);
-  ctx.reply(`Você escolheu a categoria: ${category}`);
+// Comando para receber texto
+bot.on('text', async (ctx) => {
+  const text = ctx.message.text;
+  
+  // Verifica a moderação antes de salvar
+  await moderateMessage(ctx, text);
+
+  const username = ctx.from.username || ctx.from.first_name;
+  const userId = ctx.from.id;
+  const platform = 'Telegram';
+
+  // Salvar o texto enviado se não for bloqueado
+  await savePostData('Texto', text, userId, username, platform, 'text');
+  ctx.reply(`Texto recebido: "${text}"`);
 });
 
+// Comando para receber imagens
+bot.on('photo', async (ctx) => {
+  const username = ctx.from.username || ctx.from.first_name;
+  const userId = ctx.from.id;
+  const platform = 'Telegram'; // Defina aqui a plataforma como Telegram (ou altere conforme necessário)
+  const photo = ctx.message.photo[ctx.message.photo.length - 1]; // Pega a imagem com maior resolução
+
+  try {
+    // Tenta obter o link da imagem
+    const fileLink = await bot.telegram.getFileLink(photo.file_id);
+    
+    // Acessa a propriedade 'href' para pegar o link direto
+    const imageUrl = fileLink.href;
+
+    // Verifica se o imageUrl é uma string válida e salva
+    if (typeof imageUrl !== 'string') {
+      console.error("Erro ao obter o link da imagem, retorno inválido:", imageUrl);
+      return ctx.reply("Erro ao obter o link da imagem.");
+    }
+
+    // Salvar imagem
+    await savePostData('Imagem', 'Imagem enviada', userId, username, platform, 'image', imageUrl);
+    ctx.reply(`Imagem recebida!`);
+  } catch (error) {
+    // Captura erro detalhado
+    console.error("Erro ao tentar obter o link da imagem:", error);
+    ctx.reply("Houve um erro ao tentar obter o link da imagem. Tente novamente.");
+  }
+});
+
+// Comando para receber vídeos
+bot.on('video', async (ctx) => {
+  const username = ctx.from.username || ctx.from.first_name;
+  const userId = ctx.from.id;
+  const platform = 'Telegram'; // Defina aqui a plataforma como Telegram (ou altere conforme necessário)
+  const video = ctx.message.video;
+  const fileLink = await bot.telegram.getFileLink(video.file_id);
+
+  // Verifica se o fileLink é uma string e salva
+  if (typeof fileLink !== 'string') {
+    return ctx.reply("Erro ao obter o link do vídeo.");
+  }
+
+  // Salvar vídeo
+  await savePostData('Vídeo', 'Vídeo enviado', userId, username, platform, 'video', fileLink);
+  ctx.reply(`Vídeo recebido!`);
+});
+
+// Comando para receber GIFs
+bot.on('animation', async (ctx) => {
+  const username = ctx.from.username || ctx.from.first_name;
+  const userId = ctx.from.id;
+  const platform = 'Telegram'; // Defina aqui a plataforma como Telegram (ou altere conforme necessário)
+  const animation = ctx.message.animation;
+  const fileLink = await bot.telegram.getFileLink(animation.file_id);
+
+  // Verifica se o fileLink é uma string e salva
+  if (typeof fileLink !== 'string') {
+    return ctx.reply("Erro ao obter o link do GIF.");
+  }
+
+  // Salvar GIF
+  await savePostData('GIF', 'GIF enviado', userId, username, platform, 'gif', fileLink);
+  ctx.reply(`GIF recebido!`);
+});
+
+// Lançar o bot
 bot.launch();
