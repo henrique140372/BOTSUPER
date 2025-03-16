@@ -76,7 +76,6 @@ const savePostData = async (category, text, userId, username, platform, fileType
 };
 
 // Função para tratar a moderação
-// Função para tratar a moderação
 async function moderateMessage(ctx, text) {
   const userId = ctx.from.id;
   const username = ctx.from.username || ctx.from.first_name;
@@ -101,7 +100,6 @@ async function moderateMessage(ctx, text) {
     }
   }
 }
-
 
 // Comando de boas-vindas
 bot.start((ctx) => {
@@ -163,16 +161,21 @@ bot.on('video', async (ctx) => {
   const userId = ctx.from.id;
   const platform = 'Telegram'; // Defina aqui a plataforma como Telegram (ou altere conforme necessário)
   const video = ctx.message.video;
-  const fileLink = await bot.telegram.getFileLink(video.file_id);
+  
+  try {
+    const fileLink = await bot.telegram.getFileLink(video.file_id);
 
-  // Verifica se o fileLink é uma string e salva
-  if (typeof fileLink !== 'string') {
-    return ctx.reply("Erro ao obter o link do vídeo.");
+    if (typeof fileLink !== 'string') {
+      return ctx.reply("Erro ao obter o link do vídeo.");
+    }
+
+    // Salvar vídeo
+    await savePostData('Vídeo', 'Vídeo enviado', userId, username, platform, 'video', fileLink);
+    ctx.reply(`Vídeo recebido!`);
+  } catch (error) {
+    console.error("Erro ao tentar obter o link do vídeo:", error);
+    ctx.reply("Houve um erro ao tentar obter o link do vídeo. Tente novamente.");
   }
-
-  // Salvar vídeo
-  await savePostData('Vídeo', 'Vídeo enviado', userId, username, platform, 'video', fileLink);
-  ctx.reply(`Vídeo recebido!`);
 });
 
 // Comando para receber GIFs
@@ -181,16 +184,21 @@ bot.on('animation', async (ctx) => {
   const userId = ctx.from.id;
   const platform = 'Telegram'; // Defina aqui a plataforma como Telegram (ou altere conforme necessário)
   const animation = ctx.message.animation;
-  const fileLink = await bot.telegram.getFileLink(animation.file_id);
 
-  // Verifica se o fileLink é uma string e salva
-  if (typeof fileLink !== 'string') {
-    return ctx.reply("Erro ao obter o link do GIF.");
+  try {
+    const fileLink = await bot.telegram.getFileLink(animation.file_id);
+
+    if (typeof fileLink !== 'string') {
+      return ctx.reply("Erro ao obter o link do GIF.");
+    }
+
+    // Salvar GIF
+    await savePostData('GIF', 'GIF enviado', userId, username, platform, 'gif', fileLink);
+    ctx.reply(`GIF recebido!`);
+  } catch (error) {
+    console.error("Erro ao tentar obter o link do GIF:", error);
+    ctx.reply("Houve um erro ao tentar obter o link do GIF. Tente novamente.");
   }
-
-  // Salvar GIF
-  await savePostData('GIF', 'GIF enviado', userId, username, platform, 'gif', fileLink);
-  ctx.reply(`GIF recebido!`);
 });
 
 // Lançar o bot
