@@ -1,0 +1,13 @@
+{
+  "name": "bot-super",
+  "version": "1.0.0",
+  "description": "Bot do Telegram para enviar conteúdo para o Firebase",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "dependencies": {
+    "telegraf": "^4.4.0",
+    "firebase": "^9.0.0"
+  }
+}
